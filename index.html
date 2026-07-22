@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kiki / Bouba</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, sans-serif;
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 32px;
+  }
+  #board {
+    border: 2px solid #888;
+    border-radius: 8px;
+    touch-action: none;
+    background: #fff;
+    cursor: crosshair;
+  }
+  .panel { display: flex; flex-direction: column; gap: 12px; min-width: 220px; }
+  .controls, .metrics {
+    border: 1px solid #8884;
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  button {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid #8884;
+    background: #8881;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
+  .metrics .row span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #verdict { font-size: 20px; font-weight: 700; text-align: center; padding: 8px; border-radius: 6px; }
+  #barTrack { position: relative; height: 10px; border-radius: 5px; background: linear-gradient(90deg,#4a90e2,#e2984a); }
+  #barMark { position: absolute; top: -3px; width: 4px; height: 16px; background: #222; border: 1px solid #fff; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<canvas id="board" width="480" height="360"></canvas>
+
+<div class="panel">
+  <div class="controls">
+    <div class="row">
+      <button id="toolPencil" class="active">Pencil</button>
+      <button id="toolEraser">Eraser</button>
+    </div>
+    <div class="row">
+      <label for="thickness">Thickness</label>
+      <input type="range" id="thickness" min="1" max="40" value="6">
+    </div>
+    <div class="row">
+      <button id="undoBtn">Undo</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+  </div>
+
+  <div class="metrics">
+    <div id="verdict">–</div>
+    <div class="row"><span>P(kiki)</span><span id="mProb">–</span></div>
+    <div id="barTrack"><div id="barMark" style="left:50%"></div></div>
+    <div class="row"><span>Logit</span><span id="mLogit">–</span></div>
+    <div class="row"><span>Odds (kiki:bouba)</span><span id="mOdds">–</span></div>
+    <div class="row"><span>Inference</span><span id="mLatency">–</span></div>
+    <div class="row"><span>Rate</span><span id="mRate">–</span></div>
+  </div>
+</div>
+
+<script>
+const CLASS_NAMES = ["bouba", "kiki"]; // ImageFolder sorts alphabetically -> 0=bouba, 1=kiki
+const MODEL_SIZE = 128;
+const MAX_HZ = 10;
+
+const board = document.getElementById("board");
+const ctx = board.getContext("2d", { willReadFrequently: true });
+ctx.fillStyle = "#fff";
+ctx.fillRect(0, 0, board.width, board.height);
+ctx.lineCap = "round";
+ctx.lineJoin = "round";
+
+let tool = "pencil";
+let thickness = Number(document.getElementById("thickness").value);
+let drawing = false;
+let lastX = 0, lastY = 0;
+let dirty = true;
+const undoStack = [];
+
+function pushUndo() {
+  undoStack.push(ctx.getImageData(0, 0, board.width, board.height));
+  if (undoStack.length > 50) undoStack.shift();
+}
+
+function pos(e) {
+  const r = board.getBoundingClientRect();
+  const p = e.touches ? e.touches[0] : e;
+  return { x: (p.clientX - r.left) * (board.width / r.width),
+           y: (p.clientY - r.top) * (board.height / r.height) };
+}
+
+function strokeStyle() {
+  ctx.lineWidth = thickness;
+  ctx.strokeStyle = tool === "pencil" ? "#111" : "#fff";
+}
+
+function start(e) {
+  e.preventDefault();
+  pushUndo();
+  drawing = true;
+  const { x, y } = pos(e);
+  lastX = x; lastY = y;
+  strokeStyle();
+  ctx.beginPath();
+  ctx.arc(x, y, thickness / 2, 0, Math.PI * 2);
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.fill();
+  dirty = true;
+}
+
+function move(e) {
+  if (!drawing) return;
+  e.preventDefault();
+  const { x, y } = pos(e);
+  strokeStyle();
+  ctx.beginPath();
+  ctx.moveTo(lastX, lastY);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+  lastX = x; lastY = y;
+  dirty = true;
+}
+
+function end() { drawing = false; }
+
+board.addEventListener("mousedown", start);
+board.addEventListener("mousemove", move);
+window.addEventListener("mouseup", end);
+board.addEventListener("touchstart", start);
+board.addEventListener("touchmove", move);
+window.addEventListener("touchend", end);
+
+document.getElementById("toolPencil").onclick = (e) => {
+  tool = "pencil";
+  e.target.classList.add("active");
+  document.getElementById("toolEraser").classList.remove("active");
+};
+document.getElementById("toolEraser").onclick = (e) => {
+  tool = "eraser";
+  e.target.classList.add("active");
+  document.getElementById("toolPencil").classList.remove("active");
+};
+document.getElementById("thickness").oninput = (e) => { thickness = Number(e.target.value); };
+document.getElementById("undoBtn").onclick = () => {
+  const prev = undoStack.pop();
+  if (prev) { ctx.putImageData(prev, 0, 0); dirty = true; }
+};
+document.getElementById("clearBtn").onclick = () => {
+  pushUndo();
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, board.width, board.height);
+  dirty = true;
+};
+
+// --- pad the (possibly non-square) canvas to a square, downscale to the
+// model's input size, and convert to a normalized grayscale float32 tensor ---
+const squareCanvas = document.createElement("canvas");
+const squareCtx = squareCanvas.getContext("2d");
+const modelCanvas = document.createElement("canvas");
+modelCanvas.width = MODEL_SIZE;
+modelCanvas.height = MODEL_SIZE;
+const modelCtx = modelCanvas.getContext("2d", { willReadFrequently: true });
+
+function toModelTensor() {
+  const side = Math.max(board.width, board.height);
+  squareCanvas.width = side;
+  squareCanvas.height = side;
+  squareCtx.fillStyle = "#fff";
+  squareCtx.fillRect(0, 0, side, side);
+  squareCtx.drawImage(board, (side - board.width) / 2, (side - board.height) / 2);
+
+  modelCtx.drawImage(squareCanvas, 0, 0, side, side, 0, 0, MODEL_SIZE, MODEL_SIZE);
+  const { data } = modelCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
+
+  const floats = new Float32Array(MODEL_SIZE * MODEL_SIZE);
+  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
+    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+    floats[i] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  }
+  return new ort.Tensor("float32", floats, [1, 1, MODEL_SIZE, MODEL_SIZE]);
+}
+
+// --- post-hoc calibration, applied to the raw logit before the sigmoid.
+// The model is a bit too eager to call "kiki" on ambiguous shapes, so we
+// require more positive evidence (subtract a bias) and soften how strongly
+// it commits once it does lean kiki (shrink the positive side). Retune these
+// two numbers to taste; no retraining needed. ---
+const KIKI_LOGIT_BIAS = 0;
+const KIKI_POS_SCALE = 1;
+
+function calibrate(logit) {
+  const shifted = logit - KIKI_LOGIT_BIAS;
+  return shifted > 0 ? shifted * KIKI_POS_SCALE : shifted;
+}
+
+// --- inference loop, throttled to MAX_HZ ---
+let session = null;
+let running = 0;
+let lastInferenceCount = 0;
+let lastRateTs = performance.now();
+
+async function loadModel() {
+  session = await ort.InferenceSession.create("../model_int8.onnx", {
+    executionProviders: ["wasm"],
+  });
+}
+
+async function inferOnce() {
+  if (!session || running || !dirty) return;
+  running = 1;
+  dirty = false;
+  const input = toModelTensor();
+  const t0 = performance.now();
+  const results = await session.run({ input });
+  const t1 = performance.now();
+
+  const rawLogit = results.logit.data[0];
+  const logit = calibrate(rawLogit);
+  const prob = 1 / (1 + Math.exp(-logit));
+  const label = prob > 0.5 ? CLASS_NAMES[1] : CLASS_NAMES[0];
+  const confidence = prob > 0.5 ? prob : 1 - prob;
+
+  document.getElementById("verdict").textContent = `${label} (${(confidence * 100).toFixed(1)}%)`;
+  document.getElementById("mProb").textContent = prob.toFixed(4);
+  document.getElementById("mLogit").textContent = `${logit.toFixed(4)} (raw ${rawLogit.toFixed(4)})`;
+  document.getElementById("mOdds").textContent = `${Math.exp(logit).toFixed(3)} : 1`;
+  document.getElementById("mLatency").textContent = `${(t1 - t0).toFixed(1)} ms`;
+  document.getElementById("barMark").style.left = `${(prob * 100).toFixed(1)}%`;
+
+  lastInferenceCount++;
+  const now = performance.now();
+  if (now - lastRateTs >= 1000) {
+    document.getElementById("mRate").textContent = `${lastInferenceCount} Hz`;
+    lastInferenceCount = 0;
+    lastRateTs = now;
+  }
+
+  running = 0;
+}
+
+setInterval(inferOnce, 1000 / MAX_HZ);
+loadModel();
+</script>
+
+</body>
+</html>
