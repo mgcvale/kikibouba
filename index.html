@@ -330,7 +330,7 @@ function toModelTensor(b) {
 // require more positive evidence (subtract a bias) and soften how strongly
 // it commits once it does lean kiki (shrink the positive side). Retune these
 // two numbers to taste; no retraining needed. ---
-const KIKI_LOGIT_BIAS = -0.65;
+const KIKI_LOGIT_BIAS = -0.5;
 const KIKI_POS_SCALE = 1;
 
 function calibrate(logit) {
