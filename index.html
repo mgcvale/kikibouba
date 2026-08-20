@@ -22,6 +22,16 @@
     background: #fff;
     cursor: crosshair;
   }
+  #stage { position: relative; line-height: 0; }
+  /* Matching transparent border so the overlay's content box lines up with
+     the board's, which is inset by the board's 2px border. */
+  #overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 2px solid transparent;
+    pointer-events: none;
+  }
   .panel { display: flex; flex-direction: column; gap: 12px; min-width: 220px; }
   .controls, .metrics {
     border: 1px solid #8884;
@@ -49,7 +59,10 @@
 </head>
 <body>
 
-<canvas id="board" width="480" height="360"></canvas>
+<div id="stage">
+  <canvas id="board" width="480" height="360"></canvas>
+  <canvas id="overlay" width="480" height="360"></canvas>
+</div>
 
 <div class="panel">
   <div class="controls">
@@ -80,11 +93,12 @@
 
 <script>
 const CLASS_NAMES = ["bouba", "kiki"]; // ImageFolder sorts alphabetically -> 0=bouba, 1=kiki
-const MODEL_SIZE = 128;
+const MODEL_SIZE = 192;
 const MAX_HZ = 10;
 
 const board = document.getElementById("board");
 const ctx = board.getContext("2d", { willReadFrequently: true });
+const ovCtx = document.getElementById("overlay").getContext("2d");
 ctx.fillStyle = "#fff";
 ctx.fillRect(0, 0, board.width, board.height);
 ctx.lineCap = "round";
@@ -172,30 +186,141 @@ document.getElementById("clearBtn").onclick = () => {
   dirty = true;
 };
 
-// --- pad the (possibly non-square) canvas to a square, downscale to the
-// model's input size, and convert to a normalized grayscale float32 tensor ---
-const squareCanvas = document.createElement("canvas");
-const squareCtx = squareCanvas.getContext("2d");
+// --- crop to the drawing's bounding box, rescale it to the same fraction of
+// the frame the model saw in training, and convert to a normalized grayscale
+// float32 tensor.
+//
+// Padding the whole board to a square (the previous approach) left small
+// drawings occupying ~0.3 of the frame, near the 5th percentile of the
+// training scale distribution. That matters asymmetrically: a sharp notch is
+// a high-contrast corner that survives downsampling, while a rounded lobe tip
+// is a subtle curvature gradient that gets averaged away -- so shrinking the
+// image deletes bouba evidence while preserving kiki evidence. Normalizing
+// scale here keeps tip curvature resolvable at MODEL_SIZE. ---
+const INK_THRESHOLD = 250;   // luminance below this counts as ink
+const TARGET_FILL   = 0.55;  // training extent: p5 0.31, median 0.52, p95 0.77
+
 const modelCanvas = document.createElement("canvas");
 modelCanvas.width = MODEL_SIZE;
 modelCanvas.height = MODEL_SIZE;
 const modelCtx = modelCanvas.getContext("2d", { willReadFrequently: true });
 
-function toModelTensor() {
-  const side = Math.max(board.width, board.height);
-  squareCanvas.width = side;
-  squareCanvas.height = side;
-  squareCtx.fillStyle = "#fff";
-  squareCtx.fillRect(0, 0, side, side);
-  squareCtx.drawImage(board, (side - board.width) / 2, (side - board.height) / 2);
+// Stray specks -- a stray tap in a corner, a dust dot -- would otherwise blow
+// the bounding box up to the whole board and shrink the real drawing to
+// nothing. So label the ink into connected components and keep only those
+// carrying a meaningful share of the largest one's area; a shape drawn as
+// several separate strokes survives, an isolated dot does not.
+const MIN_COMPONENT_FRACTION = 0.05;
+const MERGE_GAP = 14;   // board px; components closer than this are one shape
+const MAX_SHAPES = 8;   // latency guard
 
-  modelCtx.drawImage(squareCanvas, 0, 0, side, side, 0, 0, MODEL_SIZE, MODEL_SIZE);
+// Label the ink into 8-connected components, drop specks, then merge the
+// survivors into clusters by bbox proximity. A shape drawn as several strokes
+// (or with a gap in its outline) has overlapping/adjacent boxes and collapses
+// into one cluster; two shapes drawn in opposite corners stay separate.
+//
+// Clustering rather than a single union box matters: the union of two corner
+// shapes spans the whole board, which renders each of them small and
+// off-centre -- exactly the small-shape regime the model gets wrong.
+function inkClusters() {
+  const w = board.width, h = board.height;
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  const ink = new Uint8Array(w * h);
+  let inkCount = 0;
+  for (let p = 0, i = 0; p < w * h; p++, i += 4) {
+    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    if (lum < INK_THRESHOLD) { ink[p] = 1; inkCount++; }
+  }
+  if (inkCount === 0) return [];
+
+  // Iterative 8-connected flood fill. Each pixel is labelled before it is
+  // pushed, so it enters the stack at most once and w*h is a safe capacity.
+  const label = new Int32Array(w * h).fill(-1);
+  const stack = new Int32Array(w * h);
+  const comps = [];
+
+  for (let seed = 0; seed < w * h; seed++) {
+    if (!ink[seed] || label[seed] !== -1) continue;
+    const id = comps.length;
+    let sp = 0;
+    stack[sp++] = seed;
+    label[seed] = id;
+    let area = 0, minX = w, minY = h, maxX = -1, maxY = -1;
+    while (sp > 0) {
+      const q = stack[--sp];
+      const x = q % w, y = (q / w) | 0;
+      area++;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= w) continue;
+          const nq = ny * w + nx;
+          if (ink[nq] && label[nq] === -1) { label[nq] = id; stack[sp++] = nq; }
+        }
+      }
+    }
+    comps.push({ area, minX, minY, maxX, maxY });
+  }
+
+  let maxArea = 0;
+  for (const c of comps) if (c.area > maxArea) maxArea = c.area;
+  const kept = comps.filter((c) => c.area >= maxArea * MIN_COMPONENT_FRACTION);
+
+  // Merge by bbox proximity, repeating until a full pass changes nothing --
+  // merging is transitive (a near b, b near c => all one shape).
+  const near = (a, b) =>
+    a.minX - MERGE_GAP <= b.maxX && b.minX - MERGE_GAP <= a.maxX &&
+    a.minY - MERGE_GAP <= b.maxY && b.minY - MERGE_GAP <= a.maxY;
+
+  const clusters = kept.map((c) => ({ ...c }));
+  let merged = true;
+  while (merged) {
+    merged = false;
+    outer:
+    for (let i = 0; i < clusters.length; i++) {
+      for (let j = i + 1; j < clusters.length; j++) {
+        if (!near(clusters[i], clusters[j])) continue;
+        const a = clusters[i], b = clusters[j];
+        clusters[i] = {
+          area: a.area + b.area,
+          minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY),
+          maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY),
+        };
+        clusters.splice(j, 1);
+        merged = true;
+        break outer;
+      }
+    }
+  }
+
+  // Largest first, so the guard drops the least significant shapes.
+  clusters.sort((a, b) => b.area - a.area);
+  return clusters.slice(0, MAX_SHAPES);
+}
+
+function toModelTensor(b) {
+  modelCtx.fillStyle = "#fff";
+  modelCtx.fillRect(0, 0, MODEL_SIZE, MODEL_SIZE);
+
+  const side = Math.max(b.maxX - b.minX + 1, b.maxY - b.minY + 1) / TARGET_FILL;
+  const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+  // Source regions past the board edge read as transparent, so the white fill
+  // above shows through -- no need to pad the board itself.
+  modelCtx.drawImage(board, cx - side / 2, cy - side / 2, side, side,
+                            0, 0, MODEL_SIZE, MODEL_SIZE);
+
   const { data } = modelCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
-
   const floats = new Float32Array(MODEL_SIZE * MODEL_SIZE);
   for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
-    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
-    floats[i] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const r = data[i * 4], g = data[i * 4 + 1], bl = data[i * 4 + 2];
+    floats[i] = (0.299 * r + 0.587 * g + 0.114 * bl) / 255;
   }
   return new ort.Tensor("float32", floats, [1, 1, MODEL_SIZE, MODEL_SIZE]);
 }
@@ -205,7 +330,7 @@ function toModelTensor() {
 // require more positive evidence (subtract a bias) and soften how strongly
 // it commits once it does lean kiki (shrink the positive side). Retune these
 // two numbers to taste; no retraining needed. ---
-const KIKI_LOGIT_BIAS = 0;
+const KIKI_LOGIT_BIAS = -0.65;
 const KIKI_POS_SCALE = 1;
 
 function calibrate(logit) {
@@ -225,32 +350,102 @@ async function loadModel() {
   });
 }
 
+const BOUBA_COLOR = "#4a90e2";
+const KIKI_COLOR  = "#e2984a";
+
+// Annotate each detected shape with its own verdict. Only worth the visual
+// noise once there is more than one shape -- with a single shape the panel
+// already says everything the box would.
+function drawOverlay(preds) {
+  ovCtx.clearRect(0, 0, board.width, board.height);
+  if (preds.length < 2) return;
+
+  ovCtx.lineWidth = 2;
+  ovCtx.font = "600 13px system-ui, sans-serif";
+  for (const p of preds) {
+    const color = p.isKiki ? KIKI_COLOR : BOUBA_COLOR;
+    const pad = 6;
+    const x = p.box.minX - pad, y = p.box.minY - pad;
+    const w = p.box.maxX - p.box.minX + 1 + pad * 2;
+    const h = p.box.maxY - p.box.minY + 1 + pad * 2;
+
+    ovCtx.strokeStyle = color;
+    ovCtx.strokeRect(x, y, w, h);
+
+    const conf = p.isKiki ? p.prob : 1 - p.prob;
+    const text = `${p.isKiki ? CLASS_NAMES[1] : CLASS_NAMES[0]} ${(conf * 100).toFixed(0)}%`;
+    const tw = ovCtx.measureText(text).width;
+    const ty = Math.max(0, y - 16);   // keep the tag on-canvas near the top edge
+    ovCtx.fillStyle = color;
+    ovCtx.fillRect(x, ty, tw + 8, 16);
+    ovCtx.fillStyle = "#fff";
+    ovCtx.fillText(text, x + 4, ty + 12);
+  }
+}
+
 async function inferOnce() {
   if (!session || running || !dirty) return;
   running = 1;
   dirty = false;
-  const input = toModelTensor();
+
+  const shapes = inkClusters();
   const t0 = performance.now();
-  const results = await session.run({ input });
+  // Each shape is cropped and scaled independently, so a small shape in a
+  // corner reaches the model at the same scale as a large centred one.
+  const preds = [];
+  for (const box of shapes) {
+    const results = await session.run({ input: toModelTensor(box) });
+    const raw = results.logit.data[0];
+    const logit = calibrate(raw);
+    const prob = 1 / (1 + Math.exp(-logit));
+    preds.push({ box, raw, logit, prob, isKiki: prob > 0.5 });
+  }
   const t1 = performance.now();
 
-  const rawLogit = results.logit.data[0];
-  const logit = calibrate(rawLogit);
-  const prob = 1 / (1 + Math.exp(-logit));
-  const label = prob > 0.5 ? CLASS_NAMES[1] : CLASS_NAMES[0];
-  const confidence = prob > 0.5 ? prob : 1 - prob;
+  const setText = (id, v) => { document.getElementById(id).textContent = v; };
+  drawOverlay(preds);
 
-  document.getElementById("verdict").textContent = `${label} (${(confidence * 100).toFixed(1)}%)`;
-  document.getElementById("mProb").textContent = prob.toFixed(4);
-  document.getElementById("mLogit").textContent = `${logit.toFixed(4)} (raw ${rawLogit.toFixed(4)})`;
-  document.getElementById("mOdds").textContent = `${Math.exp(logit).toFixed(3)} : 1`;
-  document.getElementById("mLatency").textContent = `${(t1 - t0).toFixed(1)} ms`;
-  document.getElementById("barMark").style.left = `${(prob * 100).toFixed(1)}%`;
+  if (preds.length === 0) {
+    setText("verdict", "–");
+    for (const id of ["mProb", "mLogit", "mOdds", "mLatency"]) setText(id, "–");
+    document.getElementById("barMark").style.left = "50%";
+    running = 0;
+    return;
+  }
+
+  if (preds.length === 1) {
+    const p = preds[0];
+    const label = p.isKiki ? CLASS_NAMES[1] : CLASS_NAMES[0];
+    const conf = p.isKiki ? p.prob : 1 - p.prob;
+    setText("verdict", `${label} (${(conf * 100).toFixed(1)}%)`);
+  } else {
+    // Tally each shape's own verdict rather than pooling the logits. Pooling
+    // let five boubas plus one kiki collapse into a single "kiki x6", because
+    // one confident logit can outweigh several mild ones.
+    const kiki = preds.filter((p) => p.isKiki).length;
+    const bouba = preds.length - kiki;
+    const parts = [];
+    if (bouba) parts.push(`${bouba} ${CLASS_NAMES[0]}`);
+    if (kiki) parts.push(`${kiki} ${CLASS_NAMES[1]}`);
+    setText("verdict", parts.join(" · "));
+  }
+
+  // The numeric rows summarise the board as a whole; per-shape numbers live on
+  // the overlay tags.
+  const mean = (f) => preds.reduce((a, p) => a + f(p), 0) / preds.length;
+  const meanLogit = mean((p) => p.logit);
+  const meanProb = mean((p) => p.prob);
+
+  setText("mProb", meanProb.toFixed(4));
+  setText("mLogit", `${meanLogit.toFixed(4)} (raw ${mean((p) => p.raw).toFixed(4)})`);
+  setText("mOdds", `${Math.exp(meanLogit).toFixed(3)} : 1`);
+  setText("mLatency", `${(t1 - t0).toFixed(1)} ms`);
+  document.getElementById("barMark").style.left = `${(meanProb * 100).toFixed(1)}%`;
 
   lastInferenceCount++;
   const now = performance.now();
   if (now - lastRateTs >= 1000) {
-    document.getElementById("mRate").textContent = `${lastInferenceCount} Hz`;
+    setText("mRate", `${lastInferenceCount} Hz`);
     lastInferenceCount = 0;
     lastRateTs = now;
   }
