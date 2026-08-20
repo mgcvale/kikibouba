@@ -220,7 +220,7 @@ let lastInferenceCount = 0;
 let lastRateTs = performance.now();
 
 async function loadModel() {
-  session = await ort.InferenceSession.create("../model_int8.onnx", {
+  session = await ort.InferenceSession.create("model_web.onnx", {
     executionProviders: ["wasm"],
   });
 }
