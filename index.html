@@ -1,100 +1,318 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<title>Kiki / Bouba</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiki ou Bouba? — uma rede neural por dentro</title>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    font-family: system-ui, sans-serif;
-    display: flex;
-    gap: 24px;
-    align-items: flex-start;
-    justify-content: center;
-    flex-wrap: wrap;
-    padding: 32px;
+  :root {
+    color-scheme: dark;
+    --bg: #14161a;
+    --panel: #1c2027;
+    --panel-2: #232833;
+    --line: #333a47;
+    --fg: #e8ecf3;
+    --dim: #97a1b3;
+    --bouba: #4a90e2;
+    --kiki: #e2984a;
   }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; }
+  h1 .k { color: var(--kiki); }
+  h1 .b { color: var(--bouba); }
+  header { max-width: 1500px; margin: 0 auto 18px; }
+  header p { margin: 6px 0 0; color: var(--dim); max-width: 70ch; }
+
+  .layout {
+    max-width: 1500px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(480px, 520px) minmax(520px, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 1080px) { .layout { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card + .card { margin-top: 16px; }
+  .card h2 { font-size: 17px; margin: 0 0 4px; }
+  .card .lede { margin: 0 0 14px; color: var(--dim); font-size: 14.5px; }
+
   #board {
-    border: 2px solid #888;
-    border-radius: 8px;
+    border: 2px solid var(--line);
+    border-radius: 10px;
     touch-action: none;
     background: #fff;
     cursor: crosshair;
+    display: block;
+    width: 100%;
+    height: auto;
   }
   #stage { position: relative; line-height: 0; }
   /* Matching transparent border so the overlay's content box lines up with
      the board's, which is inset by the board's 2px border. */
   #overlay {
     position: absolute;
-    left: 0;
-    top: 0;
+    inset: 0;
     border: 2px solid transparent;
     pointer-events: none;
+    width: 100%;
+    height: 100%;
   }
-  .panel { display: flex; flex-direction: column; gap: 12px; min-width: 220px; }
-  .controls, .metrics {
-    border: 1px solid #8884;
-    border-radius: 8px;
-    padding: 12px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row.spread { justify-content: space-between; }
+  .controls { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
   button {
-    padding: 6px 12px;
-    border-radius: 6px;
-    border: 1px solid #8884;
-    background: #8881;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--fg);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 14.5px;
+    font-family: inherit;
   }
-  button.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
-  .metrics .row span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
-  #verdict { font-size: 20px; font-weight: 700; text-align: center; padding: 8px; border-radius: 6px; }
-  #barTrack { position: relative; height: 10px; border-radius: 5px; background: linear-gradient(90deg,#4a90e2,#e2984a); }
-  #barMark { position: absolute; top: -3px; width: 4px; height: 16px; background: #222; border: 1px solid #fff; border-radius: 2px; }
+  button:hover { border-color: #4c5769; }
+  button.active { background: var(--bouba); border-color: var(--bouba); color: #fff; }
+  input[type=range] { flex: 1; accent-color: var(--bouba); }
+
+  #verdict {
+    font-size: 30px; font-weight: 800; text-align: center;
+    padding: 12px; border-radius: 10px; background: var(--panel-2);
+    letter-spacing: -0.02em;
+  }
+  #verdict.kiki { color: var(--kiki); }
+  #verdict.bouba { color: var(--bouba); }
+  .metrics { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+  .metrics .row span:last-child { font-variant-numeric: tabular-nums; font-weight: 650; }
+  .metrics span:first-child { color: var(--dim); font-size: 14px; }
+  #barTrack {
+    position: relative; height: 12px; border-radius: 6px;
+    background: linear-gradient(90deg, var(--bouba), #6d6f78, var(--kiki));
+  }
+  #barMark {
+    position: absolute; top: -4px; width: 4px; height: 20px;
+    background: #fff; border-radius: 2px; box-shadow: 0 0 0 1px #0008;
+    transition: left .12s ease-out;
+  }
+
+  /* --- tabs --- */
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tabs button { font-size: 15px; padding: 9px 16px; font-weight: 600; }
+  .tabs button.active { background: var(--panel-2); border-color: var(--bouba); color: var(--fg); }
+  .tabpane { display: none; }
+  .tabpane.active { display: block; }
+
+  /* --- shape picker: which shape the panels are showing --- */
+  .shapes { display: flex; gap: 8px; flex-wrap: wrap; margin: -6px 0 14px; }
+  .shapes[hidden] { display: none; }
+  .shapes button {
+    display: flex; align-items: center; gap: 7px; padding: 5px 11px 5px 6px;
+    font-size: 13.5px;
+  }
+  .shapes button canvas {
+    width: 30px; height: 30px; border-radius: 4px; background: #fff; display: block;
+  }
+  .shapes button.sel { border-color: #fff; background: #ffffff14; }
+  .shapes b.k { color: var(--kiki); } .shapes b.b { color: var(--bouba); }
+
+  /* --- network diagram --- */
+  .net { position: relative; width: 100%; }
+  .net canvas.edges { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .netcol-label {
+    position: absolute; text-align: center; font-size: 12.5px; color: var(--dim);
+    transform: translateX(-50%); white-space: nowrap;
+  }
+  .netnode {
+    position: absolute; padding: 0; border: 1.5px solid #ffffff1a; border-radius: 5px;
+    background: #0d0f13; cursor: pointer; line-height: 0; overflow: hidden;
+  }
+  .netnode canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+  .netnode.sel { border-color: var(--kiki) !important; }
+  .netnode.plain { cursor: default; }
+  .netout {
+    position: absolute; border-radius: 8px; border: 1.5px solid var(--line);
+    background: #0d0f13; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; font-weight: 700; line-height: 1.15; text-align: center;
+  }
+  .netout .p { font-size: 20px; }
+  .netout .l { font-size: 11px; color: var(--dim); font-weight: 500; }
+
+  /* --- layer / channel viewer --- */
+  .focus[hidden] { display: none; }
+  .focus { display: flex; gap: 16px; align-items: flex-start; margin-top: 14px;
+           padding-top: 14px; border-top: 1px solid var(--line); }
+  .focus canvas { width: 232px; height: 232px; image-rendering: pixelated;
+                  border-radius: 8px; background: #0d0f13; }
+  .focus .meta { font-size: 14px; color: var(--dim); }
+  .focus .meta b { color: var(--fg); font-size: 15px; }
+  .focus .meta dl { display: grid; grid-template-columns: auto auto; gap: 4px 12px; margin: 10px 0 0; }
+  .focus .meta dt { color: var(--dim); }
+  .focus .meta dd { margin: 0; font-variant-numeric: tabular-nums; color: var(--fg); }
+
+  /* --- learned features --- */
+  .featcols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .featcols { grid-template-columns: 1fr; } }
+  .featcol h3 { font-size: 14px; margin: 0 0 8px; text-transform: uppercase;
+                letter-spacing: .06em; }
+  .featcol.k h3 { color: var(--kiki); }
+  .featcol.b h3 { color: var(--bouba); }
+  .featrow { display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+             padding: 4px; border-radius: 7px; border: 1.5px solid transparent; }
+  .featrow.live { background: #ffffff0d; }
+  .featrow.k.live { border-color: var(--kiki); }
+  .featrow.b.live { border-color: var(--bouba); }
+  .featrow canvas { width: 168px; height: 28px; image-rendering: pixelated;
+                    border-radius: 4px; }
+  .featrow .lbl { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums;
+                  white-space: nowrap; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .filters canvas { width: 42px; height: 42px; image-rendering: pixelated;
+                    border-radius: 5px; border: 1px solid var(--line); }
+
+  /* --- evidence map --- */
+  .evrow { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .evrow canvas { width: 256px; height: 256px; border-radius: 8px; background: #0d0f13; }
+  .sumline { font-variant-numeric: tabular-nums; font-size: 15px; margin-top: 12px; }
+  .sumline .p { color: var(--kiki); } .sumline .n { color: var(--bouba); }
+
+  /* --- latent --- */
+  #latent { width: 100%; height: auto; border-radius: 8px;
+            background: #0d0f13; display: block; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13.5px;
+            color: var(--dim); margin-top: 10px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+              margin-right: 6px; vertical-align: baseline; }
+
+  .note { font-size: 13.5px; color: var(--dim); margin-top: 12px;
+          padding-top: 12px; border-top: 1px solid var(--line); }
+  .hint { color: var(--dim); font-size: 13.5px; margin: 10px 0 0; }
+  .empty { color: var(--dim); font-size: 14.5px; padding: 24px 0; text-align: center; }
 </style>
 </head>
 <body>
 
-<div id="stage">
-  <canvas id="board" width="480" height="360"></canvas>
-  <canvas id="overlay" width="480" height="360"></canvas>
-</div>
+<header>
+  <h1>Detector de <span class="k">kiki</span> e <span class="b">bouba</span>?</h1>
+</header>
 
-<div class="panel">
-  <div class="controls">
-    <div class="row">
-      <button id="toolPencil" class="active">Pencil</button>
-      <button id="toolEraser">Eraser</button>
+<div class="layout">
+
+  <div>
+    <div class="card">
+      <div id="stage">
+        <canvas id="board" width="480" height="360"></canvas>
+        <canvas id="overlay" width="480" height="360"></canvas>
+      </div>
+      <div class="controls">
+        <div class="row">
+          <button id="toolPencil" class="active">Lápis</button>
+          <button id="toolEraser">Borracha</button>
+          <button id="undoBtn">Desfazer</button>
+          <button id="clearBtn">Limpar</button>
+        </div>
+        <div class="row">
+          <label for="thickness" style="color:var(--dim);font-size:14px">Espessura</label>
+          <input type="range" id="thickness" min="1" max="40" value="6">
+        </div>
+      </div>
     </div>
-    <div class="row">
-      <label for="thickness">Thickness</label>
-      <input type="range" id="thickness" min="1" max="40" value="6">
-    </div>
-    <div class="row">
-      <button id="undoBtn">Undo</button>
-      <button id="clearBtn">Clear</button>
+
+    <div class="card">
+      <div id="verdict">–</div>
+      <div class="metrics">
+        <div class="row spread"><span>P(kiki)</span><span id="mProb">–</span></div>
+        <div id="barTrack"><div id="barMark" style="left:50%"></div></div>
+        <div class="row spread"><span>Logit</span><span id="mLogit">–</span></div>
+        <div class="row spread"><span>Changes (kiki:bouba)</span><span id="mOdds">–</span></div>
+        <div class="row spread"><span>Tempo de inferência</span><span id="mLatency">–</span></div>
+        <div class="row spread"><span>Taxa</span><span id="mRate">–</span></div>
+      </div>
     </div>
   </div>
 
-  <div class="metrics">
-    <div id="verdict">–</div>
-    <div class="row"><span>P(kiki)</span><span id="mProb">–</span></div>
-    <div id="barTrack"><div id="barMark" style="left:50%"></div></div>
-    <div class="row"><span>Logit</span><span id="mLogit">–</span></div>
-    <div class="row"><span>Odds (kiki:bouba)</span><span id="mOdds">–</span></div>
-    <div class="row"><span>Inference</span><span id="mLatency">–</span></div>
-    <div class="row"><span>Rate</span><span id="mRate">–</span></div>
+  <div class="card">
+    <div class="tabs" id="tabs">
+      <button data-tab="layers" class="active">1. Camadas</button>
+      <button data-tab="features">2. Filtros aprendidos </button>
+      <button data-tab="evidence">3. Mapa de calor</button>
+      <button data-tab="latent">4. Espaço latente 2D</button>
+    </div>
+    <div class="shapes" id="shapes" hidden></div>
+
+    <!-- ---------- 1. camadas ---------- -->
+    <section class="tabpane active" data-pane="layers">
+      <div class="net" id="net"></div>
+      <div class="focus" id="focus" hidden>
+        <canvas id="focusCanvas" width="192" height="192"></canvas>
+        <div class="meta" id="focusMeta"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 2. features ---------- -->
+    <section class="tabpane" data-pane="features">
+      <div class="filters" id="conv1"></div>
+      <div class="featcols">
+        <div class="featcol k">
+          <h3>→ kiki</h3>
+          <div id="featK"></div>
+        </div>
+        <div class="featcol b">
+          <h3>→ bouba</h3>
+          <div id="featB"></div>
+        </div>
+      </div>
+      <p class="hint" id="featLive">&nbsp;</p>
+    </section>
+
+    <!-- ---------- 3. evidência ---------- -->
+    <section class="tabpane" data-pane="evidence">
+      <div class="evrow">
+        <div>
+          <canvas id="evInput" width="192" height="192"></canvas>
+          <div class="hint" style="text-align:center">entrada</div>
+        </div>
+        <div>
+          <canvas id="evCam" width="192" height="192"></canvas>
+          <div class="hint" style="text-align:center">evidência</div>
+        </div>
+      </div>
+      <div class="sumline" id="evSum"></div>
+    </section>
+
+    <!-- ---------- 4. latente ---------- -->
+    <section class="tabpane" data-pane="latent">
+      <canvas id="latent" width="1120" height="760"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--bouba)"></i>bouba</span>
+        <span><i style="background:var(--kiki)"></i>kiki</span>
+        <span><i style="background:#fff"></i>seu desenho</span>
+        <span><i style="background:#8a93a5"></i>anteriores</span>
+      </div>
+    </section>
   </div>
 </div>
-
 <script>
 const CLASS_NAMES = ["bouba", "kiki"]; // ImageFolder sorts alphabetically -> 0=bouba, 1=kiki
 const MODEL_SIZE = 192;
 const MAX_HZ = 10;
+const VIS_MIN_MS = 150;   // floor on the gap between visualisation redraws
 
 const board = document.getElementById("board");
 const ctx = board.getContext("2d", { willReadFrequently: true });
@@ -155,7 +373,11 @@ function move(e) {
   dirty = true;
 }
 
-function end() { drawing = false; }
+function end() {
+  if (!drawing) return;
+  drawing = false;
+  dirty = true;   // stroke finished: let the held-back panels catch up
+}
 
 board.addEventListener("mousedown", start);
 board.addEventListener("mousemove", move);
@@ -183,6 +405,9 @@ document.getElementById("clearBtn").onclick = () => {
   pushUndo();
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, board.width, board.height);
+  // Park the shape that is being wiped in the latent plot's history, so the
+  // scatter accumulates a visible trail of what visitors drew.
+  latentRemember();
   dirty = true;
 };
 
@@ -205,6 +430,10 @@ modelCanvas.width = MODEL_SIZE;
 modelCanvas.height = MODEL_SIZE;
 const modelCtx = modelCanvas.getContext("2d", { willReadFrequently: true });
 
+// Last frame handed to the model, kept so the visualisation panels can show
+// the model's-eye view rather than the raw board.
+let lastFrame = new Float32Array(MODEL_SIZE * MODEL_SIZE).fill(1);
+
 // Stray specks -- a stray tap in a corner, a dust dot -- would otherwise blow
 // the bounding box up to the whole board and shrink the real drawing to
 // nothing. So label the ink into connected components and keep only those
@@ -222,22 +451,32 @@ const MAX_SHAPES = 8;   // latency guard
 // Clustering rather than a single union box matters: the union of two corner
 // shapes spans the whole board, which renders each of them small and
 // off-centre -- exactly the small-shape regime the model gets wrong.
+// Hoisted: these are ~1.4 MB of typed arrays and inkClusters runs at MAX_HZ.
+// Reallocating them per call put a GC pause in the middle of the draw loop,
+// which showed up as the pointer skipping and smooth curves coming out
+// polygonal. The board never resizes, so one allocation is enough.
+const inkBuf = new Uint8Array(board.width * board.height);
+const labelBuf = new Int32Array(board.width * board.height);
+const stackBuf = new Int32Array(board.width * board.height);
+
 function inkClusters() {
   const w = board.width, h = board.height;
   const { data } = ctx.getImageData(0, 0, w, h);
 
-  const ink = new Uint8Array(w * h);
+  const ink = inkBuf;
   let inkCount = 0;
   for (let p = 0, i = 0; p < w * h; p++, i += 4) {
     const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    if (lum < INK_THRESHOLD) { ink[p] = 1; inkCount++; }
+    const isInk = lum < INK_THRESHOLD ? 1 : 0;
+    ink[p] = isInk;                 // written unconditionally, so no clear needed
+    inkCount += isInk;
   }
   if (inkCount === 0) return [];
 
   // Iterative 8-connected flood fill. Each pixel is labelled before it is
   // pushed, so it enters the stack at most once and w*h is a safe capacity.
-  const label = new Int32Array(w * h).fill(-1);
-  const stack = new Int32Array(w * h);
+  const label = labelBuf.fill(-1);
+  const stack = stackBuf;
   const comps = [];
 
   for (let seed = 0; seed < w * h; seed++) {
@@ -300,7 +539,8 @@ function inkClusters() {
     }
   }
 
-  // Largest first, so the guard drops the least significant shapes.
+  // Largest first, so the guard drops the least significant shapes, and so the
+  // shape the visualisation panels focus on is the most prominent one.
   clusters.sort((a, b) => b.area - a.area);
   return clusters.slice(0, MAX_SHAPES);
 }
@@ -338,6 +578,707 @@ function calibrate(logit) {
   return shifted > 0 ? shifted * KIKI_POS_SCALE : shifted;
 }
 
+// ===================== visualisation =====================
+//
+// The exported graph carries the intermediate tensors as extra named outputs
+// (see tools/make_vis_data.py). ORT lets a run fetch a subset of the outputs,
+// so the hot path still asks for `logit` alone and only the panel that is
+// actually on screen pays for its tensors.
+
+const LAYERS = [
+  { out: "hardtanh",   n: 8,  size: MODEL_SIZE,     name: "Camada 1", note: "8 canais · 192×192 · janela de 3×3 px" },
+  { out: "hardtanh_1", n: 16, size: MODEL_SIZE / 2, name: "Camada 2", note: "16 canais · 96×96 · janela de 8×8 px" },
+  { out: "hardtanh_2", n: 32, size: MODEL_SIZE / 4, name: "Camada 3", note: "32 canais · 48×48 · janela de 18×18 px" },
+];
+
+// Which extra outputs each tab needs. Anything not listed is never fetched.
+const TAB_NEEDS = {
+  layers:   ["hardtanh", "hardtanh_1", "hardtanh_2"],
+  features: ["hardtanh_2"],
+  evidence: ["max_pool2d_2"],
+  latent:   ["cat"],
+};
+
+let activeTab = "layers";
+let vis = null;          // vis_data.json, once loaded
+let patchSheet = null;   // patches.png, once loaded
+let lastVisTs = 0;
+
+// --- colour ramps --------------------------------------------------------
+// Activations are non-negative (each block ends in a clip), so they get a
+// single-ended dark-to-hot ramp. The evidence map is signed and gets a
+// diverging one, in the same blue/orange the rest of the page uses for the
+// two classes.
+// Activations are sparse: a handful of pixels near the maximum, the rest close
+// to zero. Shown linearly, almost every thumbnail reads as black. This gamma
+// lifts the low end so the shape is visible from a step back, without
+// reordering anything -- brighter still means more activated. It is baked into
+// HOT_ACT when the ramp is built (256 pow calls, once) rather than applied per
+// pixel per frame, which was 516,096 pow calls a frame at MODEL_SIZE = 192.
+const ACT_GAMMA = 0.55;
+
+function buildRamp(stops, gamma) {
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = gamma ? Math.pow(i / 255, gamma) : i / 255;
+    let k = 0;
+    while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const [t0, c0] = stops[k], [t1, c1] = stops[k + 1];
+    const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+    for (let j = 0; j < 3; j++) lut[i * 3 + j] = c0[j] + (c1[j] - c0[j]) * f;
+  }
+  return lut;
+}
+const HOT = buildRamp([
+  [0.0, [13, 15, 19]], [0.35, [46, 52, 110]], [0.65, [186, 86, 96]],
+  [0.85, [226, 152, 74]], [1.0, [255, 240, 214]],
+]);
+const HOT_ACT = buildRamp([
+  [0.0, [13, 15, 19]], [0.35, [46, 52, 110]], [0.65, [186, 86, 96]],
+  [0.85, [226, 152, 74]], [1.0, [255, 240, 214]],
+], ACT_GAMMA);
+const DIVERGING = buildRamp([
+  [0.0, [30, 96, 168]], [0.35, [40, 60, 92]], [0.5, [22, 25, 31]],
+  [0.65, [110, 76, 48]], [1.0, [236, 160, 78]],
+]);
+
+// Returns the sum of the raw values it painted. Folding that in saves a second
+// full pass over half a million floats per frame just to get the per-channel
+// mean, which is only ever used to set a border brightness.
+function paint(imageData, values, offset, count, scale, lut) {
+  const px = imageData.data;
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    const raw = values[offset + i];
+    sum += raw;
+    let t = raw * scale;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const c = (t * 255) | 0;
+    px[i * 4] = lut[c * 3];
+    px[i * 4 + 1] = lut[c * 3 + 1];
+    px[i * 4 + 2] = lut[c * 3 + 2];
+    px[i * 4 + 3] = 255;
+  }
+  return sum;
+}
+
+// ---------- panel 1: the network, drawn as a graph ----------
+// Laid out like TensorFlow Playground: one column per layer, one node per
+// channel, edges carrying the weights that were actually learned. A
+// connection between two channels is a whole 3x3 kernel rather than a scalar,
+// so its width comes from the kernel's norm and its colour from the kernel's
+// net gain (see the `convs` block in tools/make_vis_data.py).
+
+const NET_H = 820;         // px of vertical room the node columns get
+const NET_TOP = 26;        // headroom for the column captions
+const EDGES_PER_NODE = 3;  // only each node's strongest few, or it is spaghetti
+
+const NET_COLS = [
+  { kind: "input", n: 1,  max: 76, label: "entrada" },
+  { kind: "layer", li: 0, n: 8,  max: 52, label: "8 · 192²" },
+  { kind: "layer", li: 1, n: 16, max: 42, label: "16 · 96²" },
+  { kind: "layer", li: 2, n: 32, max: 26, label: "32 · 48²" },
+  { kind: "out",   n: 1,  max: 76, label: "P(kiki)" },
+];
+
+const netNodes = [];                    // [col] -> [{el, ctx, img, cx, cy, size}]
+const nodeAct = [null, null, null];     // per-layer mean activation, normalised
+const layerData = new Array(LAYERS.length).fill(null);
+let netEdgeCtx = null;
+let focused = null;
+
+function buildNet() {
+  const host = document.getElementById("net");
+  host.style.height = `${NET_H + NET_TOP + 12}px`;
+  const cv = document.createElement("canvas");
+  cv.className = "edges";
+  host.appendChild(cv);
+  netEdgeCtx = cv.getContext("2d");
+
+  NET_COLS.forEach((col, ci) => {
+    const lbl = document.createElement("div");
+    lbl.className = "netcol-label";
+    lbl.dataset.col = ci;
+    lbl.textContent = col.label;
+    host.appendChild(lbl);
+
+    const nodes = [];
+    if (col.kind === "out") {
+      const el = document.createElement("div");
+      el.className = "netout";
+      el.innerHTML = `<span class="p" id="netOutP">–</span><span class="l">P(kiki)</span>`;
+      host.appendChild(el);
+      nodes.push({ el });
+    } else if (col.kind === "input") {
+      const el = document.createElement("div");
+      el.className = "netnode plain";
+      const c = document.createElement("canvas");
+      c.width = c.height = MODEL_SIZE;
+      el.appendChild(c);
+      host.appendChild(el);
+      nodes.push({ el, ctx: c.getContext("2d"), img: new ImageData(MODEL_SIZE, MODEL_SIZE) });
+    } else {
+      const L = LAYERS[col.li];
+      for (let k = 0; k < col.n; k++) {
+        const el = document.createElement("button");
+        el.className = "netnode";
+        el.title = `${L.name} · canal ${k}`;
+        const c = document.createElement("canvas");
+        c.width = c.height = L.size;
+        el.appendChild(c);
+        el.onclick = () => { focused = { layer: col.li, channel: k }; syncFocusSel(); renderFocus(); };
+        host.appendChild(el);
+        nodes.push({ el, ctx: c.getContext("2d"), img: new ImageData(L.size, L.size) });
+      }
+    }
+    netNodes.push(nodes);
+  });
+
+  layoutNet();
+  new ResizeObserver(layoutNet).observe(host);
+}
+
+function layoutNet() {
+  const host = document.getElementById("net");
+  const W = host.clientWidth;
+  if (!W) return;                       // laid out while the tab was hidden
+  const H = NET_H + NET_TOP + 12;
+  const cv = host.querySelector("canvas.edges");
+  cv.width = W * 2; cv.height = H * 2;  // 2x for HiDPI; CSS stretches it back
+  netEdgeCtx.setTransform(2, 0, 0, 2, 0, 0);
+
+  NET_COLS.forEach((col, ci) => {
+    // A single-node column has no step to derive a size from, so it just takes
+    // its maximum; multi-node columns shrink to whatever fits the height.
+    const step = col.n > 1 ? NET_H / col.n : 0;
+    const size = col.n > 1 ? Math.max(9, Math.min(col.max, Math.floor(step) - 4)) : col.max;
+    const cx = 48 + (ci * (W - 96)) / (NET_COLS.length - 1);
+    const span = step * (col.n - 1);
+    const y0 = NET_TOP + (NET_H - span) / 2;
+    host.querySelector(`.netcol-label[data-col="${ci}"]`).style.cssText = `left:${cx}px;top:0;`;
+    netNodes[ci].forEach((node, k) => {
+      const cy = y0 + k * step;
+      node.cx = cx; node.cy = cy; node.size = size;
+      node.el.style.cssText =
+        `left:${cx - size / 2}px;top:${cy - size / 2}px;width:${size}px;height:${size}px;`;
+    });
+  });
+  drawEdges();
+}
+
+function drawEdges() {
+  if (!netEdgeCtx || !vis) return;
+  const host = document.getElementById("net");
+  const g = netEdgeCtx;
+  g.clearRect(0, 0, host.clientWidth, NET_H + NET_TOP + 12);
+
+  for (let ci = 0; ci < NET_COLS.length - 1; ci++) {
+    let nIn, nOut, norm, sum, top;
+    if (ci < vis.convs.length) {
+      const c = vis.convs[ci];
+      nIn = c.nIn; nOut = c.nOut; norm = c.norm; sum = c.sum;
+      top = EDGES_PER_NODE;
+    } else {
+      // Last hop is the classifier itself: every channel gets a line, because
+      // this is the vote and nothing about it should be hidden.
+      nIn = vis.channels.wGmp.length; nOut = 1;
+      sum = vis.channels.wGmp;
+      norm = sum.map(Math.abs);
+      top = nIn;
+    }
+    let maxNorm = 0;
+    for (const v of norm) if (v > maxNorm) maxNorm = v;
+    if (maxNorm <= 0) continue;
+
+    const src = netNodes[ci], dst = netNodes[ci + 1];
+    const act = ci > 0 ? nodeAct[ci - 1] : null;
+    for (let o = 0; o < nOut; o++) {
+      const idx = Array.from({ length: nIn }, (_, i) => i);
+      idx.sort((a, b) => norm[o * nIn + b] - norm[o * nIn + a]);
+      for (const i of idx.slice(0, top)) {
+        const a = src[i], b = dst[o];
+        if (!a || !b) continue;
+        const v = norm[o * nIn + i] / maxNorm;
+        // Dim a connection whose source channel is not firing, so the diagram
+        // lights up along the path this particular drawing actually takes.
+        const live = act ? 0.12 + 0.88 * act[i] : 1;
+        g.globalAlpha = Math.min(0.9, 0.05 + v * 0.6) * live;
+        g.strokeStyle = sum[o * nIn + i] >= 0 ? KIKI_COLOR : BOUBA_COLOR;
+        g.lineWidth = 0.4 + v * 2.4;
+        const x0 = a.cx + a.size / 2, x1 = b.cx - b.size / 2, mx = (x0 + x1) / 2;
+        g.beginPath();
+        g.moveTo(x0, a.cy);
+        g.bezierCurveTo(mx, a.cy, mx, b.cy, x1, b.cy);
+        g.stroke();
+      }
+    }
+  }
+  g.globalAlpha = 1;
+}
+
+function syncFocusSel() {
+  LAYERS.forEach((_, li) =>
+    netNodes[li + 1].forEach((node, c) =>
+      node.el.classList.toggle("sel", !!focused && focused.layer === li && focused.channel === c)));
+}
+
+function renderNet(results, pred) {
+  const inNode = netNodes[0][0];
+  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
+    const v = Math.max(0, Math.min(255, lastFrame[i] * 255));
+    inNode.img.data[i * 4] = inNode.img.data[i * 4 + 1] = inNode.img.data[i * 4 + 2] = v;
+    inNode.img.data[i * 4 + 3] = 255;
+  }
+  inNode.ctx.putImageData(inNode.img, 0, 0);
+
+  LAYERS.forEach((L, li) => {
+    const t = results[L.out];
+    if (!t) return;
+    const data = t.data, area = L.size * L.size;
+
+    // Normalise per layer, not per channel: if every channel were stretched to
+    // its own maximum they would all look equally excited, which destroys the
+    // one thing the column is meant to show -- that only some channels care
+    // about this drawing.
+    let max = 0;
+    for (let i = 0; i < data.length; i++) if (data[i] > max) max = data[i];
+    const scale = max > 1e-6 ? 1 / max : 0;
+
+    const nodes = netNodes[li + 1];
+    const acts = new Float32Array(L.n);
+    let amax = 0;
+    for (let c = 0; c < L.n; c++) {
+      const sum = paint(nodes[c].img, data, c * area, area, scale, HOT_ACT);
+      nodes[c].ctx.putImageData(nodes[c].img, 0, 0);
+      acts[c] = sum / area;
+      if (acts[c] > amax) amax = acts[c];
+    }
+    for (let c = 0; c < L.n; c++) {
+      acts[c] = amax > 1e-9 ? acts[c] / amax : 0;
+      nodes[c].el.style.borderColor = `rgba(255,255,255,${(0.08 + 0.72 * acts[c]).toFixed(3)})`;
+    }
+    nodeAct[li] = acts;
+    layerData[li] = { data, max };
+  });
+
+  if (pred) {
+    const out = document.getElementById("netOutP");
+    const colour = pred.isKiki ? KIKI_COLOR : BOUBA_COLOR;
+    out.textContent = pred.prob.toFixed(3);
+    out.style.color = colour;
+    out.parentElement.style.borderColor = colour;
+  }
+  drawEdges();
+  renderFocus();
+}
+
+function renderFocus() {
+  const box = document.getElementById("focus");
+  if (!focused || !layerData[focused.layer]) { box.hidden = true; return; }
+  const L = LAYERS[focused.layer];
+  const { data, max } = layerData[focused.layer];
+  const area = L.size * L.size;
+  const off = focused.channel * area;
+
+  const cv = document.getElementById("focusCanvas");
+  cv.width = cv.height = L.size;
+  const img = new ImageData(L.size, L.size);
+  paint(img, data, off, area, max > 1e-6 ? 1 / max : 0, HOT_ACT);
+  cv.getContext("2d").putImageData(img, 0, 0);
+
+  let sum = 0, cmax = 0;
+  for (let i = 0; i < area; i++) {
+    const v = data[off + i];
+    sum += v;
+    if (v > cmax) cmax = v;
+  }
+
+  let role = "";
+  if (L.out === "hardtanh_2" && vis) {
+    const w = vis.channels.wGmp[focused.channel];
+    const colour = w > 0 ? "var(--kiki)" : "var(--bouba)";
+    role = `<div style="margin-top:10px">→ <b style="color:${colour}">${w > 0 ? "kiki" : "bouba"}</b>
+            <span style="color:var(--dim)">(${w.toFixed(3)})</span></div>`;
+  }
+
+  box.hidden = false;
+  document.getElementById("focusMeta").innerHTML =
+    `<b>${L.name} · canal ${focused.channel}</b>
+     <div style="color:var(--dim);font-size:13px">${L.size}×${L.size}</div>
+     <dl><dt>média</dt><dd>${(sum / area).toFixed(4)}</dd>
+         <dt>máx</dt><dd>${cmax.toFixed(4)}</dd></dl>${role}`;
+}
+
+// ---------- panel 2: learned features ----------
+const featRows = [];   // {channel, el}
+
+function buildFeaturePanel() {
+  if (!vis) return;
+  const { wGmp, firesOn, strength, patchSize, patchesPerChannel } = vis.channels;
+
+  // conv1 filters, diverging around zero and shared-scaled so their relative
+  // strengths stay comparable.
+  const host = document.getElementById("conv1");
+  const k = vis.conv1.k;
+  let amax = 0;
+  for (const f of vis.conv1.weights) for (const v of f) amax = Math.max(amax, Math.abs(v));
+  vis.conv1.weights.forEach((f, i) => {
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = k;
+    cv.title = `filtro ${i}`;
+    const img = new ImageData(k, k);
+    const norm = new Float32Array(f.length);
+    for (let j = 0; j < f.length; j++) norm[j] = 0.5 + 0.5 * (f[j] / amax);
+    paint(img, norm, 0, f.length, 1, DIVERGING);
+    cv.getContext("2d").putImageData(img, 0, 0);
+    host.appendChild(cv);
+  });
+
+  // A channel earns a row only if its two stories agree: it fires on one class
+  // and its weight pushes toward that same class. Channels that fire on kikis
+  // but subtract (or vice versa) exist and are perfectly legitimate, but they
+  // make a confusing exhibit, so they sit this one out.
+  const n = wGmp.length;
+  const groups = { k: [], b: [] };
+  for (let c = 0; c < n; c++) {
+    if (wGmp[c] > 0 && firesOn[c] > 0) groups.k.push(c);
+    else if (wGmp[c] < 0 && firesOn[c] < 0) groups.b.push(c);
+  }
+  for (const g of ["k", "b"]) {
+    groups[g].sort((a, b) => strength[b] - strength[a]);
+    const host = document.getElementById(g === "k" ? "featK" : "featB");
+    for (const c of groups[g].slice(0, 8)) {
+      const row = document.createElement("div");
+      row.className = `featrow ${g}`;
+      const cv = document.createElement("canvas");
+      cv.width = patchSize * patchesPerChannel;
+      cv.height = patchSize;
+      const lbl = document.createElement("span");
+      lbl.className = "lbl";
+      lbl.textContent = `#${c}`;
+      row.append(cv, lbl);
+      host.appendChild(row);
+      featRows.push({ channel: c, el: row, cv });
+    }
+  }
+  drawPatches();
+}
+
+function drawPatches() {
+  if (!patchSheet || !vis) return;
+  const { patchSize: P, patchesPerChannel: K } = vis.channels;
+  for (const r of featRows) {
+    const g = r.cv.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    g.drawImage(patchSheet, 0, r.channel * P, P * K, P, 0, 0, P * K, P);
+  }
+}
+
+// Highlight the rows whose channel the current drawing is actually exciting.
+function renderFeatureLive(results) {
+  const t = results["hardtanh_2"];
+  if (!t || !featRows.length) return;
+  const L = LAYERS[2], area = L.size * L.size;
+  const peaks = new Float32Array(L.n);
+  let gmax = 0;
+  for (let c = 0; c < L.n; c++) {
+    let m = 0;
+    for (let i = 0; i < area; i++) { const v = t.data[c * area + i]; if (v > m) m = v; }
+    peaks[c] = m;
+    if (m > gmax) gmax = m;
+  }
+  let liveK = 0, liveB = 0, totK = 0, totB = 0;
+  for (const r of featRows) {
+    const on = gmax > 1e-6 && peaks[r.channel] > 0.6 * gmax;
+    r.el.classList.toggle("live", on);
+    const k = r.el.classList.contains("k");
+    if (k) { totK++; liveK += on; } else { totB++; liveB += on; }
+  }
+  document.getElementById("featLive").innerHTML =
+    `No seu desenho agora: <b style="color:var(--kiki)">${liveK}/${totK}</b> canais de kiki
+     e <b style="color:var(--bouba)">${liveB}/${totB}</b> de bouba estão disparando.`;
+}
+
+// ---------- panel 3: evidence map ----------
+// The classifier reads the last feature map through exactly two poolings, so
+// its output decomposes over space with no approximation:
+//
+//   logit = b + sum_c wGap[c] * mean_p f[c,p]  +  sum_c wGmp[c] * max_p f[c,p]
+//         = b + sum_p ( sum_c wGap[c] * f[c,p] / P  +  spikes landing on p )
+//
+// Attribute the average term to every pixel and the max term to the single
+// pixel that won it, and the map sums to the logit exactly. That exactness is
+// the point of the panel -- it is the decision itself, not a saliency proxy.
+const camCanvas = document.createElement("canvas");
+camCanvas.width = camCanvas.height = MODEL_SIZE / 8;
+const camCtx = camCanvas.getContext("2d");
+const inkCanvas = document.createElement("canvas");
+inkCanvas.width = inkCanvas.height = MODEL_SIZE;
+const inkCtx = inkCanvas.getContext("2d");
+
+function renderEvidence(results, rawLogit) {
+  const t = results["max_pool2d_2"];
+  if (!t || !vis) return;
+  const S = MODEL_SIZE / 8, area = S * S, n = vis.classifier.nLast;
+  const { w, b } = vis.classifier;
+
+  const cam = new Float32Array(area);
+  for (let c = 0; c < n; c++) {
+    const off = c * area, wg = w[c], wm = w[n + c];
+    let best = -Infinity, bestP = 0;
+    for (let p = 0; p < area; p++) {
+      const v = t.data[off + p];
+      cam[p] += wg * v / area;
+      if (v > best) { best = v; bestP = p; }
+    }
+    cam[bestP] += wm * best;
+  }
+
+  let total = 0, amax = 0;
+  for (let p = 0; p < area; p++) { total += cam[p]; amax = Math.max(amax, Math.abs(cam[p])); }
+
+  const img = new ImageData(S, S);
+  const norm = new Float32Array(area);
+  // Same reasoning as ACT_GAMMA, but applied symmetrically about the neutral
+  // midpoint so the sign of the evidence is preserved.
+  const s = amax > 1e-9 ? 1 / amax : 0;
+  for (let p = 0; p < area; p++) {
+    const d = cam[p] * s;
+    norm[p] = 0.5 + Math.sign(d) * Math.pow(Math.abs(d), 0.6) * 0.5;
+  }
+  paint(img, norm, 0, area, 1, DIVERGING);
+  camCtx.putImageData(img, 0, 0);
+
+  // Ink overlay: the drawing itself, as alpha, so the heat shows through the
+  // white and the strokes stay readable on top of it.
+  const ink = new ImageData(MODEL_SIZE, MODEL_SIZE);
+  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
+    ink.data[i * 4 + 3] = Math.max(0, Math.min(255, (1 - lastFrame[i]) * 255));
+  }
+  inkCtx.putImageData(ink, 0, 0);
+
+  const g = document.getElementById("evCam").getContext("2d");
+  g.imageSmoothingEnabled = true;
+  g.clearRect(0, 0, MODEL_SIZE, MODEL_SIZE);
+  g.drawImage(camCanvas, 0, 0, MODEL_SIZE, MODEL_SIZE);
+  g.globalAlpha = 0.55;
+  g.drawImage(inkCanvas, 0, 0);
+  g.globalAlpha = 1;
+
+  // The model's-eye view, for comparison.
+  const inp = document.getElementById("evInput").getContext("2d");
+  const iimg = new ImageData(MODEL_SIZE, MODEL_SIZE);
+  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
+    const v = Math.max(0, Math.min(255, lastFrame[i] * 255));
+    iimg.data[i * 4] = iimg.data[i * 4 + 1] = iimg.data[i * 4 + 2] = v;
+    iimg.data[i * 4 + 3] = 255;
+  }
+  inp.putImageData(iimg, 0, 0);
+
+  const sign = (v) => `<span class="${v >= 0 ? "p" : "n"}">${v >= 0 ? "+" : ""}${v.toFixed(3)}</span>`;
+  document.getElementById("evSum").innerHTML =
+    `soma do mapa ${sign(total)} &nbsp;+&nbsp; viés ${sign(b)} &nbsp;=&nbsp;
+     <b>logit ${sign(total + b)}</b>
+     <span style="color:var(--dim)">&nbsp; (a rede diz ${rawLogit.toFixed(3)})</span>`;
+}
+
+// ---------- which shape the panels are showing ----------
+// With several shapes on the board, "the activations" is ambiguous unless the
+// page says whose activations. Everything except the latent plot renders one
+// shape at a time, chosen here; the board overlay rings the same one.
+let selectedShape = 0;
+let shapeSig = "";
+
+function buildShapeChips(preds) {
+  const host = document.getElementById("shapes");
+  // Rebuilding every frame would fight the user's clicks, so only rebuild when
+  // the set of shapes or their verdicts actually changed.
+  const sig = preds.map((p) => (p.isKiki ? "k" : "b")).join("") + "|" + selectedShape;
+  if (sig === shapeSig) return;
+  shapeSig = sig;
+
+  if (preds.length < 2) { host.hidden = true; host.replaceChildren(); return; }
+  host.hidden = false;
+  const chips = preds.map((p, i) => {
+    const b = document.createElement("button");
+    if (i === selectedShape) b.className = "sel";
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = 48;
+    const g = cv.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, 48, 48);
+    const side = Math.max(p.box.maxX - p.box.minX + 1, p.box.maxY - p.box.minY + 1) * 1.2;
+    const cx = (p.box.minX + p.box.maxX) / 2, cy = (p.box.minY + p.box.maxY) / 2;
+    g.drawImage(board, cx - side / 2, cy - side / 2, side, side, 0, 0, 48, 48);
+    const tag = document.createElement("b");
+    tag.className = p.isKiki ? "k" : "b";
+    tag.textContent = `${i + 1} · ${p.isKiki ? CLASS_NAMES[1] : CLASS_NAMES[0]}`;
+    b.append(cv, tag);
+    b.onclick = () => { selectedShape = i; shapeSig = ""; dirty = true; };
+    return b;
+  });
+  host.replaceChildren(...chips);
+}
+
+// ---------- panel 4: latent space ----------
+// Axes come from tools/make_vis_data.py: u1 is the classifier's own weight
+// vector, u2 the leading direction of what is left after removing it.
+const latentTrail = [];
+let latentNow = null;      // [[x, y, isKiki], ...] -- one entry per shape
+let latentView = null;
+
+function latentProject(embedding) {
+  const { mu, u1, u2 } = vis.latent;
+  let x = 0, y = 0;
+  for (let i = 0; i < mu.length; i++) {
+    const d = embedding[i] - mu[i];
+    x += d * u1[i];
+    y += d * u2[i];
+  }
+  return [x, y];
+}
+
+function latentRemember() {
+  if (!latentNow) return;
+  for (const pt of latentNow) {
+    latentTrail.push(pt);
+    if (latentTrail.length > 80) latentTrail.shift();
+  }
+}
+
+function latentSetup() {
+  const pts = vis.latent.points;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) {
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  const padX = (x1 - x0) * 0.14, padY = (y1 - y0) * 0.14;
+  latentView = { x0: x0 - padX, x1: x1 + padX, y0: y0 - padY, y1: y1 + padY };
+
+  // Where the calibrated decision flips, in axis-1 units. logit is affine in
+  // x: logit = w.mu + b + |w| * x, and the app calls kiki once the calibrated
+  // logit passes zero, i.e. once the raw logit passes KIKI_LOGIT_BIAS.
+  const { w, b } = vis.classifier;
+  const { mu } = vis.latent;
+  let wmu = 0, wnorm = 0;
+  for (let i = 0; i < w.length; i++) { wmu += w[i] * mu[i]; wnorm += w[i] * w[i]; }
+  wnorm = Math.sqrt(wnorm);
+  latentView.boundary = (KIKI_LOGIT_BIAS - b - wmu) / wnorm;
+  drawLatent();
+}
+
+function drawLatent() {
+  const cv = document.getElementById("latent");
+  if (!latentView) return;
+  const g = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  const { x0, x1, y0, y1 } = latentView;
+  const sx = (x) => ((x - x0) / (x1 - x0)) * (W - 80) + 60;
+  const sy = (y) => H - 50 - ((y - y0) / (y1 - y0)) * (H - 90);
+
+  g.fillStyle = "#0d0f13";
+  g.fillRect(0, 0, W, H);
+
+  // Decision boundary, plus a wash on each side so which half is which is
+  // readable at a glance from a metre away.
+  const bx = sx(latentView.boundary);
+  g.fillStyle = "#4a90e211"; g.fillRect(60, 20, Math.max(0, bx - 60), H - 70);
+  g.fillStyle = "#e2984a11"; g.fillRect(bx, 20, Math.max(0, W - 20 - bx), H - 70);
+  g.strokeStyle = "#c8d0e0"; g.lineWidth = 2; g.setLineDash([8, 8]);
+  g.beginPath(); g.moveTo(bx, 20); g.lineTo(bx, H - 50); g.stroke();
+  g.setLineDash([]);
+
+  for (const [x, y, l] of vis.latent.points) {
+    g.fillStyle = l ? "#e2984a" : "#4a90e2";
+    g.globalAlpha = 0.5;
+    g.beginPath(); g.arc(sx(x), sy(y), 5, 0, Math.PI * 2); g.fill();
+  }
+  g.globalAlpha = 1;
+
+  for (const [x, y] of latentTrail) {
+    g.fillStyle = "#8a93a5";
+    g.beginPath(); g.arc(sx(x), sy(y), 6, 0, Math.PI * 2); g.fill();
+  }
+
+  if (latentNow) {
+    latentNow.forEach(([x, y, isKiki], i) => {
+      const px = sx(x), py = sy(y);
+      g.save();
+      g.translate(px, py); g.rotate(Math.PI / 4);
+      g.fillStyle = "#fff";
+      g.strokeStyle = isKiki ? KIKI_COLOR : BOUBA_COLOR;
+      g.lineWidth = 5;
+      g.fillRect(-15, -15, 30, 30); g.strokeRect(-15, -15, 30, 30);
+      g.restore();
+      // Number the markers only when there is more than one, so they can be
+      // matched against the shape picker above.
+      if (latentNow.length > 1) {
+        g.fillStyle = "#0d0f13";
+        g.font = "700 22px system-ui, sans-serif";
+        g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText(String(i + 1), px, py);
+        g.textBaseline = "alphabetic";
+      }
+    });
+  }
+
+  g.fillStyle = "#97a1b3";
+  g.font = "500 27px system-ui, sans-serif";
+  g.textAlign = "center";
+  g.fillText("eixo da decisão  →  mais kiki", W / 2, H - 18);
+  g.fillText("fronteira", bx, 40);
+  g.save();
+  g.translate(24, H / 2); g.rotate(-Math.PI / 2);
+  g.fillText("variação que a rede ignora", 0, 0);
+  g.restore();
+}
+
+
+// Nothing on the board means nothing to show: leave the panels blank rather
+// than displaying the activations of a drawing that has been erased.
+function clearVis() {
+  for (const nodes of netNodes) {
+    for (const node of nodes) {
+      if (!node.ctx) continue;
+      node.ctx.clearRect(0, 0, node.img.width, node.img.height);
+      node.el.style.borderColor = "";
+    }
+  }
+  layerData.fill(null);
+  nodeAct.fill(null);
+  const out = document.getElementById("netOutP");
+  out.textContent = "–";
+  out.style.color = "";
+  out.parentElement.style.borderColor = "";
+  drawEdges();
+  document.getElementById("focus").hidden = true;
+  for (const r of featRows) r.el.classList.remove("live");
+  document.getElementById("featLive").textContent =
+    "Desenhe algo: os canais que o seu desenho está ativando ficam destacados.";
+  for (const id of ["evInput", "evCam"]) {
+    const cv = document.getElementById(id);
+    cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+  }
+  document.getElementById("evSum").innerHTML = "";
+  document.getElementById("shapes").hidden = true;
+  shapeSig = "";
+  latentNow = null;
+  drawLatent();
+}
+
+// ---------- tabs ----------
+document.getElementById("tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-tab]");
+  if (!btn) return;
+  activeTab = btn.dataset.tab;
+  for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b === btn);
+  for (const p of document.querySelectorAll(".tabpane")) {
+    p.classList.toggle("active", p.dataset.pane === activeTab);
+  }
+  dirty = true;   // repopulate the newly revealed panel on the next tick
+});
+
 // --- inference loop, throttled to MAX_HZ ---
 let session = null;
 let running = 0;
@@ -345,9 +1286,47 @@ let lastInferenceCount = 0;
 let lastRateTs = performance.now();
 
 async function loadModel() {
-  session = await ort.InferenceSession.create("model_web.onnx", {
-    executionProviders: ["wasm"],
-  });
+  // The WASM EP runs on the main thread by default, so every run() blocked the
+  // pointer handler for ~20 ms and strokes came out polygonal. `proxy` moves
+  // the session into a worker. wasmPaths has to be spelled out because the
+  // worker cannot resolve them relative to the CDN script tag.
+  ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
+  ort.env.wasm.proxy = true;
+  try {
+    session = await ort.InferenceSession.create("model_web.onnx", {
+      executionProviders: ["wasm"],
+    });
+  } catch (err) {
+    // If the worker cannot start (file://, a strict CSP), fall back rather
+    // than leaving the page with no model at all.
+    console.warn("proxy session failed, falling back to main thread", err);
+    ort.env.wasm.proxy = false;
+    session = await ort.InferenceSession.create("model_web.onnx", {
+      executionProviders: ["wasm"],
+    });
+  }
+}
+
+async function loadVisData() {
+  try {
+    const res = await fetch("vis_data.json");
+    if (!res.ok) throw new Error(res.status);
+    vis = await res.json();
+  } catch (err) {
+    // The panels that need precomputed data degrade to a message; the layer
+    // browser and the raw verdict keep working regardless.
+    for (const id of ["featK", "evSum"]) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<div class="empty">vis_data.json não carregou — rode
+        <code>python tools/make_vis_data.py</code> e sirva a pasta por HTTP.</div>`;
+    }
+    return;
+  }
+  buildFeaturePanel();
+  latentSetup();
+  patchSheet = new Image();
+  patchSheet.onload = drawPatches;
+  patchSheet.src = "patches.png";
 }
 
 const BOUBA_COLOR = "#4a90e2";
@@ -360,27 +1339,34 @@ function drawOverlay(preds) {
   ovCtx.clearRect(0, 0, board.width, board.height);
   if (preds.length < 2) return;
 
-  ovCtx.lineWidth = 2;
   ovCtx.font = "600 13px system-ui, sans-serif";
-  for (const p of preds) {
+  preds.forEach((p, i) => {
     const color = p.isKiki ? KIKI_COLOR : BOUBA_COLOR;
     const pad = 6;
     const x = p.box.minX - pad, y = p.box.minY - pad;
     const w = p.box.maxX - p.box.minX + 1 + pad * 2;
     const h = p.box.maxY - p.box.minY + 1 + pad * 2;
 
+    // Ring the shape the other panels are showing, so the picker, the board
+    // and the numbered latent markers all refer to the same thing.
+    if (i === selectedShape) {
+      ovCtx.strokeStyle = "#fff";
+      ovCtx.lineWidth = 5;
+      ovCtx.strokeRect(x, y, w, h);
+    }
+    ovCtx.lineWidth = 2;
     ovCtx.strokeStyle = color;
     ovCtx.strokeRect(x, y, w, h);
 
     const conf = p.isKiki ? p.prob : 1 - p.prob;
-    const text = `${p.isKiki ? CLASS_NAMES[1] : CLASS_NAMES[0]} ${(conf * 100).toFixed(0)}%`;
+    const text = `${i + 1} · ${p.isKiki ? CLASS_NAMES[1] : CLASS_NAMES[0]} ${(conf * 100).toFixed(0)}%`;
     const tw = ovCtx.measureText(text).width;
     const ty = Math.max(0, y - 16);   // keep the tag on-canvas near the top edge
     ovCtx.fillStyle = color;
     ovCtx.fillRect(x, ty, tw + 8, 16);
     ovCtx.fillStyle = "#fff";
     ovCtx.fillText(text, x + 4, ty + 12);
-  }
+  });
 }
 
 async function inferOnce() {
@@ -389,24 +1375,66 @@ async function inferOnce() {
   dirty = false;
 
   const shapes = inkClusters();
+
+  // Only the outputs the visible tab actually draws are fetched, and the heavy
+  // ones only for the shape the picker has selected: the feature maps run to
+  // ~1.5 MB per shape per frame, so fetching them for eight shapes at 10 Hz
+  // would move over 100 MB/s for panels that can only show one shape anyway.
+  // The latent embedding is 64 floats, so that one is cheap enough to fetch
+  // for every shape -- which is what lets the plot plot them all.
+  // While a stroke is in progress the visitor is watching the canvas, not the
+  // panels, and the panel repaint is the single most expensive thing in the
+  // tick. So hold it until the pointer lifts. The verdict keeps updating at
+  // full rate -- that is the part that has to feel live. This is a debounce of
+  // the expensive half only; debouncing the whole loop would cost the very
+  // liveness the exhibit is for.
+  const now = performance.now();
+  const wantVis = !drawing && now - lastVisTs >= VIS_MIN_MS;
+  const extras = wantVis ? (TAB_NEEDS[activeTab] || []) : [];
+  const allCat = wantVis && activeTab === "latent";
+  const sel = Math.min(selectedShape, shapes.length - 1);
+
   const t0 = performance.now();
+  const preds = [];
+  const latentPts = [];
+  let visResults = null;
   // Each shape is cropped and scaled independently, so a small shape in a
   // corner reaches the model at the same scale as a large centred one.
-  const preds = [];
-  for (const box of shapes) {
-    const results = await session.run({ input: toModelTensor(box) });
+  for (let i = 0; i < shapes.length; i++) {
+    const tensor = toModelTensor(shapes[i]);
+    if (i === sel) lastFrame = tensor.data;
+    const fetches = ["logit"];
+    if (i === sel) fetches.push(...extras);
+    else if (allCat) fetches.push("cat");
+    const results = await session.run({ input: tensor }, fetches);
+    if (i === sel && extras.length) visResults = results;
     const raw = results.logit.data[0];
     const logit = calibrate(raw);
     const prob = 1 / (1 + Math.exp(-logit));
-    preds.push({ box, raw, logit, prob, isKiki: prob > 0.5 });
+    preds.push({ box: shapes[i], raw, logit, prob, isKiki: prob > 0.5 });
+    if (results.cat && vis) latentPts.push([...latentProject(results.cat.data), prob > 0.5]);
   }
   const t1 = performance.now();
 
+  selectedShape = Math.max(0, sel);
+  buildShapeChips(preds);
+
+  if (visResults) {
+    lastVisTs = now;
+    if (activeTab === "layers") renderNet(visResults, preds[sel]);
+    else if (activeTab === "features") renderFeatureLive(visResults);
+    else if (activeTab === "evidence") renderEvidence(visResults, preds[sel].raw);
+    else if (activeTab === "latent") { latentNow = latentPts; drawLatent(); }
+  }
+
   const setText = (id, v) => { document.getElementById(id).textContent = v; };
   drawOverlay(preds);
+  const verdictEl = document.getElementById("verdict");
 
   if (preds.length === 0) {
+    clearVis();
     setText("verdict", "–");
+    verdictEl.className = "";
     for (const id of ["mProb", "mLogit", "mOdds", "mLatency"]) setText(id, "–");
     document.getElementById("barMark").style.left = "50%";
     running = 0;
@@ -417,7 +1445,8 @@ async function inferOnce() {
     const p = preds[0];
     const label = p.isKiki ? CLASS_NAMES[1] : CLASS_NAMES[0];
     const conf = p.isKiki ? p.prob : 1 - p.prob;
-    setText("verdict", `${label} (${(conf * 100).toFixed(1)}%)`);
+    setText("verdict", `${label} · ${(conf * 100).toFixed(1)}%`);
+    verdictEl.className = p.isKiki ? "kiki" : "bouba";
   } else {
     // Tally each shape's own verdict rather than pooling the logits. Pooling
     // let five boubas plus one kiki collapse into a single "kiki x6", because
@@ -428,6 +1457,7 @@ async function inferOnce() {
     if (bouba) parts.push(`${bouba} ${CLASS_NAMES[0]}`);
     if (kiki) parts.push(`${kiki} ${CLASS_NAMES[1]}`);
     setText("verdict", parts.join(" · "));
+    verdictEl.className = "";
   }
 
   // The numeric rows summarise the board as a whole; per-shape numbers live on
@@ -437,24 +1467,26 @@ async function inferOnce() {
   const meanProb = mean((p) => p.prob);
 
   setText("mProb", meanProb.toFixed(4));
-  setText("mLogit", `${meanLogit.toFixed(4)} (raw ${mean((p) => p.raw).toFixed(4)})`);
+  setText("mLogit", `${meanLogit.toFixed(4)} (bruto ${mean((p) => p.raw).toFixed(4)})`);
   setText("mOdds", `${Math.exp(meanLogit).toFixed(3)} : 1`);
   setText("mLatency", `${(t1 - t0).toFixed(1)} ms`);
   document.getElementById("barMark").style.left = `${(meanProb * 100).toFixed(1)}%`;
 
   lastInferenceCount++;
-  const now = performance.now();
-  if (now - lastRateTs >= 1000) {
+  const tick = performance.now();
+  if (tick - lastRateTs >= 1000) {
     setText("mRate", `${lastInferenceCount} Hz`);
     lastInferenceCount = 0;
-    lastRateTs = now;
+    lastRateTs = tick;
   }
 
   running = 0;
 }
 
+buildNet();
 setInterval(inferOnce, 1000 / MAX_HZ);
 loadModel();
+loadVisData();
 </script>
 
 </body>
