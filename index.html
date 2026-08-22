@@ -1402,7 +1402,9 @@ async function inferOnce() {
   // corner reaches the model at the same scale as a large centred one.
   for (let i = 0; i < shapes.length; i++) {
     const tensor = toModelTensor(shapes[i]);
-    if (i === sel) lastFrame = tensor.data;
+    // A proxied session TRANSFERS the input buffer to the worker, detaching
+    // it here, so this must be a copy or every model's-eye panel goes black.
+    if (i === sel) lastFrame = tensor.data.slice();
     const fetches = ["logit"];
     if (i === sel) fetches.push(...extras);
     else if (allCat) fetches.push("cat");
